@@ -1,0 +1,83 @@
+#authors-note-presets {
+    display: grid;
+    gap: 0.5em;
+    margin-block: 0.5em;
+    padding: 0.6em;
+    border: 1px solid var(--SmartThemeBorderColor, #80808080);
+    border-radius: 0.5em;
+}
+
+#authors-note-presets [hidden],
+#authors-note-presets ul:empty {
+    display: none !important;
+}
+
+#authors-note-presets :is(.an-presets-toolbar, .an-presets-actions, li) {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+}
+
+#authors-note-presets :is(.an-presets-toolbar, .an-presets-actions) {
+    flex-wrap: wrap;
+}
+
+#authors-note-presets :is(.an-presets-toolbar b, li span) {
+    flex: 1;
+    min-width: 0;
+}
+
+#authors-note-presets .an-presets-toolbar b {
+    overflow-wrap: anywhere;
+}
+
+#authors-note-presets .an-presets-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.35em;
+    max-height: 11em;
+    overflow-y: auto;
+    padding: 0.15em;
+    margin: 0;
+    list-style: none;
+}
+
+#authors-note-presets .an-presets-editor {
+    display: grid;
+    gap: 0.35em;
+}
+
+#authors-note-presets :is(input, textarea) {
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0;
+}
+
+#authors-note-presets textarea {
+    resize: vertical;
+}
+
+#authors-note-presets .menu_button {
+    margin: 0;
+    white-space: nowrap;
+}
+
+#authors-note-presets .menu_button:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+#authors-note-presets :focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+}
+
+#authors-note-presets :is(li span, [role="status"]) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#authors-note-presets [role="status"]:empty {
+    position: absolute;
+}

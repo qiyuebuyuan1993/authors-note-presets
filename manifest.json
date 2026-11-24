@@ -1,0 +1,9 @@
+{
+    "display_name": "作者注释预设",
+    "loading_order": 99,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "version": "1.0.0"
+}
