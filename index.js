@@ -1,50 +1,83 @@
-const KEY = 'authors-note-presets';
+import { chatKey, pickFields, readNotes, scopes, writeNotes } from './author-note.js';
 
-function mount() {
-    const note = document.querySelector('#extension_floating_prompt');
-    const tavern = globalThis.SillyTavern ?? globalThis.Luker;
-    if (!note || !tavern?.getContext || document.getElementById(KEY)) {
+const KEY = 'authors-note-presets';
+const SCOPE_IDS = Object.keys(scopes);
+
+function savedNotes(snapshot) {
+    return snapshot.notes ?? { chat: { text: snapshot.text } };
+}
+
+function describe(snapshot) {
+    const notes = savedNotes(snapshot);
+    const parts = SCOPE_IDS.filter(scope => notes[scope]).map(scope => scopes[scope]);
+    const settings = notes.chat ?? notes.defaults;
+    if (settings?.position === 1 && settings.depth !== undefined) {
+        parts.push('深度 ' + settings.depth);
+    }
+    return parts.join(' · ');
+}
+
+function mount(tavern) {
+    if (document.getElementById('an-snapshots') || !document.getElementById('extension_floating_prompt')) {
         return;
     }
 
     const getContext = () => tavern.getContext();
-    const panel = document.createElement('section');
-    panel.id = KEY;
-    panel.setAttribute('aria-labelledby', 'an-presets-title');
-    panel.innerHTML = `
-        <header class="an-presets-toolbar">
-            <b id="an-presets-title">作者注释预设</b>
-            <button type="button" class="menu_button" data-new>新建预设</button>
-            <button type="button" class="menu_button" data-undo disabled>取消填入</button>
-        </header>
-        <ul class="an-presets-list" aria-labelledby="an-presets-title"></ul>
-        <form class="an-presets-editor" hidden>
-            <label for="an-presets-name">预设名称</label>
-            <input id="an-presets-name" class="text_pole" type="text" required>
-            <label for="an-presets-text">注释内容</label>
-            <textarea id="an-presets-text" class="text_pole" rows="4" required></textarea>
-            <div class="an-presets-actions">
-                <button type="submit" class="menu_button">保存预设</button>
-                <button type="button" class="menu_button" data-close>取消编辑</button>
-                <button type="button" class="menu_button" data-delete hidden>删除预设</button>
+    const dialog = document.createElement('dialog');
+    dialog.id = 'an-snapshots';
+    dialog.setAttribute('aria-labelledby', 'an-title');
+    dialog.innerHTML = `
+        <div class="an-window">
+            <header class="an-header">
+                <h2 id="an-title">作者注释快照</h2>
+                <button type="button" class="menu_button an-close" data-close aria-label="关闭作者注释快照">×</button>
+            </header>
+            <div class="an-toolbar">
+                <button type="button" class="menu_button an-primary" data-new autofocus>保存当前快照</button>
+                <button type="button" class="menu_button" data-clear>清空当前聊天注释</button>
             </div>
-        </form>
-        <small class="an-presets-status" role="status"></small>
-    `;
-    note.before(panel);
+            <div class="an-scroll">
+                <p class="an-target" data-target></p>
+                <form class="an-editor" hidden>
+                    <label for="an-name">快照名称</label>
+                    <input id="an-name" type="text" class="text_pole" required>
+                    <div class="an-fields"></div>
+                    <div class="an-actions">
+                        <button type="submit" class="menu_button an-primary" data-save>保存快照</button>
+                        <button type="button" class="menu_button" data-discard>取消编辑</button>
+                        <button type="button" class="menu_button" data-delete hidden>删除快照</button>
+                    </div>
+                </form>
+                <p class="an-empty" data-empty>还没有快照。</p>
+                <ul class="an-list" aria-label="已保存的作者注释快照"></ul>
+            </div>
+            <footer class="an-footer">
+                <span role="status"></span>
+                <button type="button" class="menu_button" data-undo disabled>撤销</button>
+            </footer>
+        </div>`;
+    document.body.append(dialog);
 
-    const list = panel.querySelector('ul');
-    const editor = panel.querySelector('form');
-    const name = panel.querySelector('#an-presets-name');
-    const content = panel.querySelector('#an-presets-text');
-    const create = panel.querySelector('[data-new]');
-    const undo = panel.querySelector('[data-undo]');
-    const remove = panel.querySelector('[data-delete]');
-    const status = panel.querySelector('[role="status"]');
-    let activeChat = {};
-    let editing;
-    let returnFocus;
-    let confirmingDelete = false;
+    const list = dialog.querySelector('.an-list');
+    const editor = dialog.querySelector('form');
+    const name = editor.querySelector('#an-name');
+    const fields = editor.querySelector('.an-fields');
+    const create = dialog.querySelector('[data-new]');
+    const clear = dialog.querySelector('[data-clear]');
+    const undo = dialog.querySelector('[data-undo]');
+    const remove = editor.querySelector('[data-delete]');
+    const status = dialog.querySelector('[role="status"]');
+    const target = dialog.querySelector('[data-target]');
+    let readyChat = chatKey(getContext());
+    let launcher;
+    let draft;
+    let lastChange;
+    let rows = [];
+
+    function state() {
+        const context = getContext();
+        return { context, notes: readNotes(context, readyChat) };
+    }
 
     function presets() {
         const saved = getContext().extensionSettings[KEY];
@@ -57,170 +90,273 @@ function mount() {
         context.saveSettingsDebounced();
     }
 
-    function chatMetadata() {
-        const { chatId, characterId, groupId, chatMetadata } = getContext();
-        // A client can change its selected chat before the new note has loaded.
-        if (chatId == null || chatId === '' || chatId !== activeChat.chatId
-            || characterId !== activeChat.characterId || groupId !== activeChat.groupId) {
-            return null;
+    function availableUndo({ context, notes }) {
+        if (lastChange?.target === chatKey(context)
+            && JSON.stringify(pickFields(notes, lastChange.after)) === JSON.stringify(lastChange.after)) {
+            return lastChange;
         }
-        return chatMetadata;
+
+        const legacy = context.chatMetadata?.[KEY];
+        if (notes.chat && typeof legacy?.previous === 'string' && notes.chat.text === legacy.applied) {
+            return { before: { chat: { text: legacy.previous } }, legacy: true };
+        }
+        return null;
     }
 
-    function currentUndo(metadata) {
-        const record = metadata?.[KEY];
-        return record?.applied === note.value && typeof record.previous === 'string' ? record : null;
-    }
-
-    function refreshControls() {
-        const metadata = chatMetadata();
-        undo.disabled = !currentUndo(metadata);
-        for (const fill of list.querySelectorAll('.an-presets-fill')) {
-            fill.disabled = !metadata;
+    function refresh() {
+        const current = state();
+        const { context, notes } = current;
+        const character = context.characters?.[context.characterId]?.name;
+        if (notes.character) {
+            target.textContent = '人物项写入当前角色' + (character ? '「' + character + '」' : '') + '。';
+        } else {
+            target.textContent = notes.chat ? '可载入当前聊天与默认项。' : '打开聊天后可使用当前聊天与人物项。';
+        }
+        clear.disabled = !notes.chat?.text;
+        undo.disabled = !availableUndo(current);
+        for (const { button, snapshot } of rows) {
+            button.disabled = !Object.keys(pickFields(savedNotes(snapshot), notes)).length;
         }
     }
 
-    function syncChat() {
-        const { chatId, characterId, groupId } = getContext();
-        activeChat = { chatId, characterId, groupId };
-        status.textContent = chatMetadata() ? '' : '打开聊天后即可填入预设。';
-        refreshControls();
-    }
-
-    function publishNote() {
-        // Let the native note handler update the prompt, token count, and chat save.
-        note.dispatchEvent(new Event('input', { bubbles: true }));
-        refreshControls();
-    }
-
-    function apply(preset) {
-        const metadata = chatMetadata();
-        if (!metadata) {
+    function apply(values, message) {
+        const { context, notes } = state();
+        if (chatKey(context) !== readyChat && (values.chat || values.character)) {
+            status.textContent = '聊天正在切换，请稍后载入。';
+            refresh();
             return;
         }
-        if (note.value === preset.text) {
-            status.textContent = `当前注释与「${preset.name}」相同。`;
+        const patch = pickFields(values, notes);
+        if (!Object.keys(patch).length) {
+            refresh();
             return;
         }
-        const previous = currentUndo(metadata)?.previous ?? note.value;
-        note.value = preset.text;
-        metadata[KEY] = { previous, applied: note.value };
-        publishNote();
-        status.textContent = `当前聊天已填入「${preset.name}」。`;
-    }
+        const before = pickFields(notes, patch);
+        if (JSON.stringify(before) === JSON.stringify(patch)) {
+            status.textContent = '当前作者注释已与快照一致。';
+            refresh();
+            return;
+        }
 
-    function rowButton(label, preset) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'menu_button';
-        button.textContent = label;
-        button.setAttribute('aria-label', `${label} ${preset.name}`);
-        return button;
+        if (patch.chat?.text !== undefined && patch.chat.text !== before.chat.text) {
+            delete context.chatMetadata[KEY];
+        }
+        writeNotes(context, patch);
+        const after = pickFields(readNotes(context, readyChat), patch);
+        lastChange = { target: chatKey(context), before, after };
+        status.textContent = message + (values.character && !patch.character ? ' 人物项请在单聊中载入。' : '');
+        refresh();
     }
 
     function renderList() {
+        rows = [];
         list.replaceChildren();
-        for (const preset of presets()) {
+        for (const snapshot of presets()) {
+            if (typeof snapshot?.name !== 'string') {
+                continue;
+            }
             const row = document.createElement('li');
-            const label = document.createElement('span');
-            label.textContent = preset.name;
-            label.title = preset.name;
-            const fill = rowButton('填入', preset);
-            fill.classList.add('an-presets-fill');
-            fill.addEventListener('click', () => apply(preset));
-            const edit = rowButton('编辑', preset);
-            edit.addEventListener('click', () => openEditor(preset, edit));
-            row.append(label, fill, edit);
+            const load = document.createElement('button');
+            load.type = 'button';
+            load.className = 'an-entry';
+            load.setAttribute('aria-label', '载入快照 ' + snapshot.name);
+            const title = document.createElement('span');
+            title.className = 'an-name';
+            title.textContent = snapshot.name;
+            title.title = snapshot.name;
+            const detail = document.createElement('small');
+            detail.textContent = describe(snapshot);
+            const loadLabel = document.createElement('span');
+            loadLabel.className = 'an-load-label';
+            loadLabel.textContent = '载入';
+            load.append(title, detail, loadLabel);
+            load.addEventListener('click', () => apply(savedNotes(snapshot), '已载入「' + snapshot.name + '」。'));
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'menu_button';
+            edit.textContent = '编辑';
+            edit.setAttribute('aria-label', '编辑快照 ' + snapshot.name);
+            edit.addEventListener('click', () => openEditor(snapshot, edit));
+            row.append(load, edit);
             list.append(row);
+            rows.push({ button: load, snapshot });
         }
-        refreshControls();
+        dialog.querySelector('[data-empty]').hidden = rows.length > 0;
+        refresh();
     }
 
-    function openEditor(preset, button) {
-        if (editor.hidden) {
-            editing = preset;
-            returnFocus = button;
-            name.value = preset?.name ?? '';
-            content.value = preset?.text ?? (chatMetadata() ? note.value : '');
-            confirmingDelete = false;
-            remove.textContent = '删除预设';
-            remove.hidden = !preset;
-            editor.hidden = false;
-            status.textContent = '';
+    function openEditor(snapshot, origin) {
+        if (!editor.hidden) {
+            name.focus();
+            return;
         }
+        const notes = snapshot ? savedNotes(snapshot) : state().notes;
+        const inputs = {};
+        fields.replaceChildren();
+        for (const scope of SCOPE_IDS) {
+            if (!notes[scope]) {
+                continue;
+            }
+            const label = document.createElement('label');
+            const caption = document.createElement('span');
+            caption.textContent = scopes[scope];
+            const input = snapshot ? document.createElement('textarea') : document.createElement('input');
+            if (snapshot) {
+                label.className = 'an-text-field';
+                input.className = 'text_pole';
+                input.rows = 3;
+                input.value = notes[scope].text ?? '';
+                label.append(caption, input);
+            } else {
+                label.className = 'checkbox_label';
+                input.type = 'checkbox';
+                input.checked = true;
+                label.append(input, caption);
+            }
+            fields.append(label);
+            inputs[scope] = input;
+        }
+        if (!snapshot) {
+            const hint = document.createElement('small');
+            hint.textContent = '当前聊天包含世界信息扫描开关。默认项用于新聊天。';
+            fields.append(hint);
+        }
+
+        draft = { snapshot, notes, inputs, origin };
+        name.value = snapshot?.name ?? '';
+        editor.querySelector('[data-save]').textContent = snapshot ? '保存更改' : '保存快照';
+        remove.hidden = !snapshot;
+        remove.textContent = '删除快照';
+        remove.dataset.confirm = '';
+        editor.hidden = false;
+        status.textContent = '';
         name.focus();
     }
 
     function closeEditor() {
+        const origin = draft.origin;
+        draft = null;
         editor.hidden = true;
-        editing = null;
-        (returnFocus.isConnected ? returnFocus : create).focus();
+        (origin.isConnected ? origin : create).focus();
     }
 
-    create.addEventListener('click', () => openEditor(null, create));
-    panel.querySelector('[data-close]').addEventListener('click', () => {
-        status.textContent = '';
-        closeEditor();
-    });
-    editor.addEventListener('submit', (event) => {
+    editor.addEventListener('submit', event => {
         event.preventDefault();
-        if (!name.value.trim() || !content.value.trim()) {
-            status.textContent = '请输入预设名称和注释内容。';
-            (name.value.trim() ? content : name).focus();
+        const title = name.value.trim();
+        if (!title) {
+            status.textContent = '请输入快照名称。';
+            name.focus();
             return;
         }
-        const preset = { name: name.value.trim(), text: content.value };
+        const { snapshot, inputs, notes } = draft;
+        const captured = {};
+        for (const [scope, input] of Object.entries(inputs)) {
+            if (snapshot) {
+                captured[scope] = { ...notes[scope], text: input.value };
+            } else if (input.checked) {
+                captured[scope] = notes[scope];
+            }
+        }
+        if (!Object.keys(captured).length) {
+            status.textContent = '请选择至少一个保存范围。';
+            return;
+        }
+        const value = { name: title, notes: captured };
         const entries = presets();
-        savePresets(editing ? entries.map(entry => entry === editing ? preset : entry) : [...entries, preset]);
+        savePresets(snapshot ? entries.map(entry => entry === snapshot ? value : entry) : [...entries, value]);
         renderList();
         closeEditor();
-        status.textContent = `已保存「${preset.name}」。`;
-    });
-    remove.addEventListener('click', () => {
-        if (!confirmingDelete) {
-            confirmingDelete = true;
-            remove.textContent = '确认删除';
-            status.textContent = `再次点击以删除预设「${editing.name}」。`;
-            return;
-        }
-        const removed = editing.name;
-        savePresets(presets().filter(entry => entry !== editing));
-        renderList();
-        closeEditor();
-        status.textContent = `已删除预设「${removed}」。`;
-    });
-    undo.addEventListener('click', () => {
-        const metadata = chatMetadata();
-        const record = currentUndo(metadata);
-        if (!record) {
-            return;
-        }
-        delete metadata[KEY];
-        note.value = record.previous;
-        publishNote();
-        status.textContent = record.previous ? '已恢复填入前的注释。' : '已清空当前聊天的作者注释。';
+        status.textContent = '已保存「' + title + '」。';
     });
 
-    // Also handle the synthetic input event used by the built-in /note command.
-    globalThis.$(note).on('input.anTextPresets', () => {
-        const metadata = chatMetadata();
-        if (metadata?.[KEY] && !currentUndo(metadata)) {
-            delete metadata[KEY];
-            status.textContent = '注释已改动。';
-        }
-        refreshControls();
+    create.addEventListener('click', () => openEditor(null, create));
+    editor.querySelector('[data-discard]').addEventListener('click', () => {
+        closeEditor();
+        status.textContent = '';
     });
+    remove.addEventListener('click', () => {
+        const snapshot = draft.snapshot;
+        if (!remove.dataset.confirm) {
+            remove.dataset.confirm = 'true';
+            remove.textContent = '确认删除';
+            status.textContent = '再次点击以删除「' + snapshot.name + '」。';
+            return;
+        }
+        savePresets(presets().filter(entry => entry !== snapshot));
+        renderList();
+        closeEditor();
+        status.textContent = '已删除「' + snapshot.name + '」。';
+    });
+
+    clear.addEventListener('click', () => apply({ chat: { text: '' } }, '已清空当前聊天的作者注释。'));
+    undo.addEventListener('click', () => {
+        const current = state();
+        const change = availableUndo(current);
+        if (!change) {
+            refresh();
+            return;
+        }
+        if (change.legacy) {
+            delete current.context.chatMetadata[KEY];
+        }
+        writeNotes(current.context, change.before);
+        lastChange = null;
+        status.textContent = '已恢复操作前的作者注释。';
+        refresh();
+    });
+
+    function show(event) {
+        launcher = event.currentTarget;
+        refresh();
+        dialog.showModal();
+        if (draft) {
+            name.focus();
+        }
+    }
+
+    dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', event => {
+        if (event.target === dialog) {
+            dialog.close();
+        }
+    });
+    dialog.addEventListener('close', () => {
+        (launcher?.offsetParent ? launcher : document.getElementById('extensionsMenuButton'))?.focus();
+    });
+
+    for (const [id, buttonId, classes] of [
+        ['extensionsMenu', 'an-snapshot-wand', 'list-group-item flex-container flexGap5'],
+        ['extensions_settings', 'an-snapshot-drawer', 'menu_button menu_button_icon'],
+    ]) {
+        const container = document.getElementById(id);
+        if (!container) {
+            continue;
+        }
+        const button = document.createElement('button');
+        button.id = buttonId;
+        button.type = 'button';
+        button.className = classes;
+        button.setAttribute('aria-haspopup', 'dialog');
+        const icon = document.createElement('i');
+        icon.className = 'fa-solid fa-note-sticky fa-fw';
+        icon.setAttribute('aria-hidden', 'true');
+        const label = document.createElement('span');
+        label.textContent = '作者注释快照';
+        button.append(icon, label);
+        button.addEventListener('click', show);
+        container.append(button);
+    }
+
     const { eventSource, eventTypes } = getContext();
-    eventSource.on(eventTypes.APP_READY, () => {
-        // SillyTavern can load third-party extensions before it wires the note drawer.
-        eventSource.makeLast(eventTypes.CHAT_CHANGED, syncChat);
-        syncChat();
+    eventSource.makeLast(eventTypes.CHAT_CHANGED, () => {
+        readyChat = chatKey(getContext());
+        refresh();
     });
     renderList();
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mount, { once: true });
-} else {
-    mount();
+const tavern = globalThis.SillyTavern ?? globalThis.Luker;
+if (tavern?.getContext) {
+    const { eventSource, eventTypes } = tavern.getContext();
+    eventSource.on(eventTypes.APP_READY, () => mount(tavern));
 }
