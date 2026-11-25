@@ -5,6 +5,7 @@
     color: inherit;
     font: inherit;
     text-align: start;
+    align-items: center;
 }
 
 #an-snapshot-wand > i {
