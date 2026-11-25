@@ -1,7 +1,40 @@
 import { chatKey, pickFields, readNotes, scopes, writeNotes } from './author-note.js';
 
 const KEY = 'authors-note-presets';
+const LABEL = '作者注释快照';
+const OPEN_COMMAND = 'authors-note-presets-open';
+const QUICK_REPLY_INSTALLED = KEY + '-quick-reply-installed';
 const SCOPE_IDS = Object.keys(scopes);
+
+async function installQuickReply(context) {
+    const api = globalThis.quickReplyApi;
+    if (!api || context.extensionSettings[QUICK_REPLY_INSTALLED] === true) {
+        return;
+    }
+
+    const message = '/' + OPEN_COMMAND;
+    const title = '打开' + LABEL;
+    const names = api.listSets();
+    let setName = names.find(name => api.getSetByName(name).qrList.some(reply =>
+        reply.message === message && reply.title === title,
+    ));
+
+    if (!setName) {
+        setName = LABEL;
+        for (let suffix = 2; names.includes(setName); suffix++) {
+            setName = `${LABEL} (${suffix})`;
+        }
+        const set = await api.createSet(setName, { disableSend: false, injectInput: false });
+        api.createQuickReply(setName, LABEL, { message, title });
+        await set.save();
+    }
+
+    if (!api.listGlobalSets().includes(setName)) {
+        api.addGlobalSet(setName);
+    }
+    context.extensionSettings[QUICK_REPLY_INSTALLED] = true;
+    context.saveSettingsDebounced();
+}
 
 function savedNotes(snapshot) {
     return snapshot.notes ?? { chat: { text: snapshot.text } };
@@ -29,7 +62,7 @@ function mount(tavern) {
     dialog.innerHTML = `
         <div class="an-window">
             <header class="an-header">
-                <h2 id="an-title">作者注释快照</h2>
+                <h2 id="an-title">${LABEL}</h2>
                 <button type="button" class="menu_button an-close" data-close aria-label="关闭作者注释快照">×</button>
             </header>
             <div class="an-toolbar">
@@ -305,8 +338,11 @@ function mount(tavern) {
         refresh();
     });
 
-    function show(event) {
-        launcher = event.currentTarget;
+    function show(button = document.activeElement) {
+        if (dialog.open) {
+            return;
+        }
+        launcher = button;
         refresh();
         dialog.showModal();
         if (draft) {
@@ -324,27 +360,21 @@ function mount(tavern) {
         (launcher?.offsetParent ? launcher : document.getElementById('extensionsMenuButton'))?.focus();
     });
 
-    for (const [id, buttonId, classes] of [
-        ['extensionsMenu', 'an-snapshot-wand', 'list-group-item flex-container flexGap5'],
-        ['extensions_settings', 'an-snapshot-drawer', 'menu_button menu_button_icon'],
-    ]) {
-        const container = document.getElementById(id);
-        if (!container) {
-            continue;
-        }
+    const wand = document.getElementById('extensionsMenu');
+    if (wand) {
         const button = document.createElement('button');
-        button.id = buttonId;
+        button.id = 'an-snapshot-wand';
         button.type = 'button';
-        button.className = classes;
+        button.className = 'list-group-item flex-container flexGap5';
         button.setAttribute('aria-haspopup', 'dialog');
         const icon = document.createElement('i');
         icon.className = 'fa-solid fa-note-sticky fa-fw';
         icon.setAttribute('aria-hidden', 'true');
         const label = document.createElement('span');
-        label.textContent = '作者注释快照';
+        label.textContent = LABEL;
         button.append(icon, label);
-        button.addEventListener('click', show);
-        container.append(button);
+        button.addEventListener('click', () => show(button));
+        wand.append(button);
     }
 
     const { eventSource, eventTypes } = getContext();
@@ -353,6 +383,21 @@ function mount(tavern) {
         refresh();
     });
     renderList();
+
+    const { SlashCommandParser, SlashCommand } = getContext();
+    if (SlashCommandParser?.addCommandObject && SlashCommand?.fromProps && !SlashCommandParser.commands?.[OPEN_COMMAND]) {
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name: OPEN_COMMAND,
+            helpString: '打开作者注释快照窗口。',
+            callback: () => {
+                show();
+                return '';
+            },
+        }));
+        void installQuickReply(getContext()).catch(error => {
+            console.warn('[作者注释快照] 无法自动添加快速回复按钮', error);
+        });
+    }
 }
 
 const tavern = globalThis.SillyTavern ?? globalThis.Luker;

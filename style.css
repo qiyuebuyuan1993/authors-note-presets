@@ -11,10 +11,6 @@
     flex: none;
 }
 
-#an-snapshot-drawer {
-    margin-block: 0.35em;
-}
-
 #an-snapshots {
     box-sizing: border-box;
     width: min(620px, calc(100% - 20px));
@@ -228,7 +224,7 @@
 }
 
 #an-snapshots :focus-visible,
-:is(#an-snapshot-wand, #an-snapshot-drawer):focus-visible {
+#an-snapshot-wand:focus-visible {
     outline: 2px solid currentColor;
     outline-offset: 1px;
 }
