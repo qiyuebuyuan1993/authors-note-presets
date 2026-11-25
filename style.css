@@ -5,11 +5,20 @@
     color: inherit;
     font: inherit;
     text-align: start;
-    align-items: center;
+}
+
+#extensionsMenu #an-snapshot-wand {
+    align-items: baseline;
 }
 
 #an-snapshot-wand > i {
     flex: none;
+}
+
+#an-snapshot-wand > i::before {
+    display: inline-block;
+    /* Match the visible height of the icon to the label. */
+    transform: scale(1.1);
 }
 
 #an-snapshots {
