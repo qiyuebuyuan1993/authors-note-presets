@@ -362,19 +362,35 @@ function mount(tavern) {
 
     const wand = document.getElementById('extensionsMenu');
     if (wand) {
-        const button = document.createElement('button');
-        button.id = 'an-snapshot-wand';
-        button.type = 'button';
-        button.className = 'list-group-item flex-container flexGap5';
-        button.setAttribute('aria-haspopup', 'dialog');
-        const icon = document.createElement('i');
-        icon.className = 'fa-solid fa-note-sticky fa-fw';
+        const item = document.createElement('div');
+        item.id = 'an-snapshot-wand';
+        item.className = 'list-group-item flex-container flexGap5';
+        item.tabIndex = 0;
+        item.setAttribute('role', 'button');
+        item.setAttribute('aria-haspopup', 'dialog');
+        const icon = document.createElement('div');
+        icon.className = 'fa-solid fa-note-sticky extensionsMenuExtensionButton';
         icon.setAttribute('aria-hidden', 'true');
         const label = document.createElement('span');
         label.textContent = LABEL;
-        button.append(icon, label);
-        button.addEventListener('click', () => show(button));
-        wand.append(button);
+        item.append(icon, label);
+        item.addEventListener('click', () => show(item));
+        item.addEventListener('keydown', event => {
+            if (event.key === ' ') {
+                event.preventDefault();
+            }
+            if (event.key === 'Enter' && !event.repeat) {
+                event.preventDefault();
+                item.click();
+            }
+        });
+        item.addEventListener('keyup', event => {
+            if (event.key === ' ') {
+                event.preventDefault();
+                item.click();
+            }
+        });
+        wand.append(item);
     }
 
     const { eventSource, eventTypes } = getContext();

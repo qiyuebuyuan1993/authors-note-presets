@@ -1,24 +1,15 @@
-#an-snapshot-wand {
-    width: 100%;
-    background: none;
-    border: 0;
-    color: inherit;
-    font: inherit;
-    text-align: start;
-}
-
 #extensionsMenu #an-snapshot-wand {
     align-items: baseline;
 }
 
-#an-snapshot-wand > i {
+#an-snapshot-wand > .extensionsMenuExtensionButton {
     flex: none;
 }
 
-#an-snapshot-wand > i::before {
+#an-snapshot-wand > .extensionsMenuExtensionButton::before {
     display: inline-block;
-    /* Match the visible height of the icon to the label. */
-    transform: scale(1.1);
+    /* Match the icon's visible height and position to the label. */
+    transform: translateY(-0.03em) scale(1.1);
 }
 
 #an-snapshots {
